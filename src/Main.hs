@@ -44,7 +44,6 @@ showgrid g =  putStr . unlines .  concat $ interleave line $ showrow <$> g
 initial :: Int -> Grid
 initial n = replicate n ( replicate n B )
 
-test = [[X, O, O], [B,O,X],[O, X, B]]
 diag ::  Grid -> [Player]
 diag g = [ g !!i !!j | i <- [0..size-1],j <- [0..size-1], i == j]
 
@@ -78,35 +77,94 @@ move g p i
    | valid g i = split size $ take i l ++ [p] ++ drop (i+1) l
       where l = concat g
 
-display :: Grid -> Player  -> IO()
-display g p = do
-   cls
-   goto(1,4)
-   showgrid  g
-   putStrLn "\n\n"
-   if won g (next p) then
-                     putStrLn $ "Player " ++ show (next p) ++ " wins!"
-                     else if full g then
-                     putStrLn "It's a draw!"
-                     else
-                     play g p
+data Tree a = Tree a [Tree a]
+   deriving (Show, Eq, Ord)
+   
+instance Functor Tree where
+   fmap f (Tree a []) = Tree (f a) []
+   fmap f (Tree a xs) = Tree (f a) [fmap f x | x <- xs]
+
+gridtree :: Grid -> Player -> Tree Grid
+gridtree g p 
+   | full g = Tree g []
+   | won g (next p) = Tree g []
+   | otherwise = Tree g [ gridtree ( move g p i ) (next p) | i <- [0..size^2-1], valid g i]
+
+prune :: Int -> Tree a -> Tree a
+prune n ( Tree x xs )
+  | n == 0 = Tree x []
+  | null xs = Tree x []
+  | otherwise = Tree x [prune (n-1) t | t <- xs]
+
+apply :: Tree (Player,Grid) -> (Player,Grid)
+apply ( Tree g _ ) = g
+
+player :: Tree (Player,Grid) -> Player
+player (Tree g _) = fst g
+
+nextmoves :: Tree (Player,Grid) -> [ (Player, Grid) ]
+nextmoves (Tree _ []) = []
+nextmoves ( Tree _ xs ) = apply <$> xs
+
+turn :: Grid -> Player
+turn g 
+  | (length $ filter (/= B) ( concat g )) `mod` 2 == 0 = O
+  | otherwise = X
+
+minmax :: Tree Grid -> Tree (Player,Grid)
+minmax (Tree g []) 
+  | won g O = Tree (O,g) []
+  | won g X = Tree (X,g) []
+  | otherwise = Tree (B,g) []
+
+minmax (Tree g xs) 
+  | turn g == X = Tree (maximum $ player <$> [ minmax x | x <- xs],g) [ minmax x | x<- xs]
+  | otherwise = Tree (minimum $ player <$> [ minmax x | x <- xs],g) [ minmax x | x<- xs]
 
 getnum :: IO Int
 getnum = do
    val <- getLine
    if [] /= val && all isDigit val then
-                                   return (( read val ) - 1)
-                                   else
-                                   do putStrLn "Invalid number, Try again:"
-                                      getnum
+                                   do x <- return (read val - 1)
+                                      if x > 0 && x < ( size^2 ) then
+                                          return x
+                                       else
+                                          do putStrLn "Invalid number, Try again:"
+                                             getnum
+   else
+      do putStrLn "Invalid number, Try again:"
+         getnum
+
+display :: Grid -> Player  -> IO()
+display g p = do
+   cls
+   goto(1,4)
+   showgrid  g
+   if won g (next p) then
+                     putStrLn $ "\n\nPlayer " ++ show (next p) ++ " wins!"
+                     else if full g then
+                     putStrLn "It's a draw!"
+                     else
+                     play g p
+
 
 play :: Grid -> Player -> IO()
+play g X = do
+   putStrLn "Computer is thinking..."
+   display (snd $ maximum x) O
+      where x = nextmoves $  minmax $  gridtree g X
+
 play g p = do
    putStrLn $ "player " ++ show p ++ "'s turn 1-9):"
    i <- getnum
-   display ( move g p i ) ( next p ) 
+   if valid g i then
+      display ( move g p i ) ( next p ) 
+   else
+      do
+         putStrLn "Invalid number, try again: "
+         play g p
 
 
 main :: IO ()
-main = display (initial 3) O
+main =  display ( initial 3 ) O
 
